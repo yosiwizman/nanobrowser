@@ -21,6 +21,7 @@ import { type BrowserContextConfig, DEFAULT_BROWSER_CONTEXT_CONFIG, type PageSta
 import { createLogger } from '@src/background/log';
 import { ClickableElementProcessor } from './dom/clickable/service';
 import { isUrlAllowed } from './util';
+import { CDPSessionManager } from './cdp/cdp-session-manager';
 
 const logger = createLogger('Page');
 
@@ -67,8 +68,16 @@ export default class Page {
   private _validWebPage = false;
   private _cachedState: PageState | null = null;
   private _cachedStateClickableElementsHashes: CachedStateClickableElementsHashes | null = null;
+  private _cdpSessionManager: CDPSessionManager;
 
-  constructor(tabId: number, url: string, title: string, config: Partial<BrowserContextConfig> = {}) {
+  constructor(
+    tabId: number,
+    url: string,
+    title: string,
+    config: Partial<BrowserContextConfig> = {},
+    cdpSessionManager: CDPSessionManager,
+  ) {
+    this._cdpSessionManager = cdpSessionManager;
     this._tabId = tabId;
     this._config = { ...DEFAULT_BROWSER_CONTEXT_CONFIG, ...config };
     this._state = build_initial_state(tabId, url, title);
@@ -117,6 +126,9 @@ export default class Page {
     // Add anti-detection scripts
     await this._addAntiDetectionScripts();
 
+    // Attach CDP session
+    // await this._cdpSessionManager.attach(this._tabId);
+
     return true;
   }
 
@@ -164,6 +176,9 @@ export default class Page {
 
   async detachPuppeteer(): Promise<void> {
     if (this._browser) {
+      // Detach CDP session
+      await this._cdpSessionManager.detach(this._tabId);
+
       await this._browser.disconnect();
       this._browser = null;
       this._puppeteerPage = null;
