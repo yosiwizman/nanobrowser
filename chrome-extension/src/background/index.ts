@@ -251,6 +251,34 @@ chrome.runtime.onConnect.addListener(port => {
             break;
           }
 
+          case 'frames': {
+            try {
+              logger.info('frames command received');
+
+              // Get current page tab ID
+              const currentPage = await browserContext.getCurrentPage();
+              const tabId = currentPage.tabId;
+
+              // Get all CDP clients for the current tab
+              const clients = await browserContext.getCDPClientsInfo();
+
+              // Log all client information using one logger.info call
+              logger.info('CDP Clients Info for tab', tabId, ':', JSON.stringify(clients, null, 2));
+
+              return port.postMessage({
+                type: 'success',
+                message: `Logged CDP clients info for tab ${tabId}. Check console for details.`,
+              });
+            } catch (error) {
+              logger.error('Frames command failed:', error);
+              return port.postMessage({
+                type: 'error',
+                error: error instanceof Error ? error.message : 'Frames command failed',
+              });
+            }
+            break;
+          }
+
           default:
             return port.postMessage({ type: 'error', error: 'Unknown message type' });
         }

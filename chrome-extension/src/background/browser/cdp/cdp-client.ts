@@ -76,6 +76,13 @@ export class CDPClient {
   }
 
   /**
+   * Update the execution context ID for this client
+   */
+  updateExecutionContext(executionContextId: ExecutionContextId): void {
+    this.executionContextId = executionContextId;
+  }
+
+  /**
    * Check if this client represents an Out-of-Process IFrame (OOPIF)
    */
   isOOPIF(): boolean {

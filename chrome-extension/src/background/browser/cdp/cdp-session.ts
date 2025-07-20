@@ -1,5 +1,12 @@
 import { CDPClient } from './cdp-client';
-import type { DebuggerSession, FrameId, ExecutionContextDescription, CDPClientInfo, TargetInfo } from './types';
+import {
+  DebuggerSession,
+  FrameId,
+  ExecutionContextDescription,
+  CDPClientInfo,
+  TargetInfo,
+  DebuggerEventSource,
+} from './types';
 
 /**
  * CDPSession manages all CDP clients for a single tab
@@ -7,6 +14,8 @@ import type { DebuggerSession, FrameId, ExecutionContextDescription, CDPClientIn
 export class CDPSession {
   private clients = new Map<FrameId, CDPClient>();
   private tabId: number;
+  private isInitialized: boolean = false;
+  private mainFrameId: FrameId | null = null;
 
   constructor(tabId: number) {
     this.tabId = tabId;
@@ -16,6 +25,11 @@ export class CDPSession {
    * Initialize the main tab client and enable domains for event-driven discovery
    */
   async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      console.log(`[CDPSession] Already initialized for tab ${this.tabId}`);
+      return;
+    }
+
     console.log(`[CDPSession] Initializing for tab ${this.tabId}`);
 
     // Create main tab session for enabling domains
@@ -24,12 +38,11 @@ export class CDPSession {
     // Enable necessary domains
     await this.enableDomains(mainSession);
 
-    // Wait for domains to fully enable and stabilize
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // Detect and mark the main frame
+    // IMPORTANT: Detect main frame during initialization to ensure consistent session state
+    // This fixes OOPIF re-attach issues by establishing a stable baseline before processing frame events
     await this.detectMainFrame();
 
+    this.isInitialized = true;
     console.log(`[CDPSession] Initialization complete`);
   }
 
@@ -78,38 +91,43 @@ export class CDPSession {
       const result = (await chrome.debugger.sendCommand(session, 'Page.getFrameTree')) as { frameTree: any };
 
       if (result && result.frameTree && result.frameTree.frame) {
-        const mainFrameId = result.frameTree.frame.id;
-        console.log(`[CDPSession] Main frame detected: ${mainFrameId}`);
+        this.mainFrameId = result.frameTree.frame.id;
+        console.log(`[CDPSession] Main frame detected: ${this.mainFrameId}`);
 
-        // Check if we already have a client for the main frame
-        const existingClient = this.clients.get(mainFrameId);
-        if (existingClient) {
-          // Update existing client's main frame flag
-          existingClient.setMainFrame(true);
-          console.log(`[CDPSession] Updated existing client as main frame: ${mainFrameId}`);
-        } else {
-          // Create new client for the main frame
-          const mainClient = new CDPClient(session, mainFrameId);
-          mainClient.setMainFrame(true);
-          this.clients.set(mainFrameId, mainClient);
-          console.log(`[CDPSession] Created new client for main frame: ${mainFrameId}`);
+        if (this.mainFrameId) {
+          // Check if we already have a client for the main frame
+          const existingClient = this.clients.get(this.mainFrameId);
+          if (existingClient) {
+            // Update existing client's main frame flag
+            existingClient.setMainFrame(true);
+            console.log(`[CDPSession] Updated existing client as main frame: ${this.mainFrameId}`);
+          } else {
+            // Create new client for the main frame
+            const mainClient = new CDPClient(session, this.mainFrameId);
+            mainClient.setMainFrame(true);
+            this.clients.set(this.mainFrameId, mainClient);
+            console.log(`[CDPSession] Created new client for main frame: ${this.mainFrameId}`);
 
-          // Inject frameId
-          await mainClient.injectFrameId();
+            // Inject frameId
+            await mainClient.injectFrameId();
+          }
         }
       } else {
         console.warn(`[CDPSession] No frame tree received from Page.getFrameTree`);
       }
     } catch (error) {
       console.error('[CDPSession] Failed to detect main frame:', error);
-      throw error; // Re-throw to fail initialization if main frame detection fails
+      throw error; // Re-throw to fail detection
     }
   }
 
   /**
    * Handle execution context created event
    */
-  async handleExecutionContextCreated(context: ExecutionContextDescription): Promise<void> {
+  async handleExecutionContextCreated(
+    context: ExecutionContextDescription,
+    source: DebuggerEventSource,
+  ): Promise<void> {
     const frameId = context.auxData?.frameId;
     if (!frameId) {
       console.log(`[CDPSession] Skipping context without frameId: ${context.name}`);
@@ -127,21 +145,56 @@ export class CDPSession {
       return;
     }
 
-    // Check if we already have a client for this frame
-    if (this.clients.has(frameId)) {
-      console.log(`[CDPSession] Client already exists for frame: ${frameId}`);
-      return;
+    // Determine if this is an OOPIF context based on source.sessionId
+    const isOOPIFContext = !!source.sessionId;
+
+    if (isOOPIFContext) {
+      console.log(`[CDPSession] OOPIF execution context created for frame: ${frameId}, sessionId: ${source.sessionId}`);
+
+      // Check if we already have an OOPIF client for this frame
+      const existingClient = this.clients.get(frameId);
+      if (existingClient && existingClient.getInfo().sessionId === source.sessionId) {
+        console.log(`[CDPSession] OOPIF client already exists for frame: ${frameId}`);
+        return;
+      }
+
+      // Create OOPIF client with sessionId
+      const session: DebuggerSession = { tabId: this.tabId, sessionId: source.sessionId };
+      const client = new CDPClient(session, frameId, context.id);
+      this.clients.set(frameId, client);
+
+      console.log(`[CDPSession] Created OOPIF client for frame: ${frameId}`);
+
+      // Inject frameId
+      await client.injectFrameId();
+    } else {
+      // This is a same-process iframe context
+      console.log(`[CDPSession] Same-process execution context created for frame: ${frameId}`);
+
+      // Check if we already have a client for this frame
+      const existingClient = this.clients.get(frameId);
+      if (existingClient) {
+        const info = existingClient.getInfo();
+        // Update execution context if this is a same-process iframe without one
+        if (!info.isMainFrame && !info.sessionId && !info.executionContextId) {
+          console.log(`[CDPSession] Updating execution context for existing frame: ${frameId}`);
+          existingClient.updateExecutionContext(context.id);
+        } else {
+          console.log(`[CDPSession] Client already fully configured for frame: ${frameId}`);
+        }
+        return;
+      }
+
+      console.log(`[CDPSession] Creating client for same-process frame: ${frameId}`);
+
+      // Create client for same-process iframe with execution context
+      const session: DebuggerSession = { tabId: this.tabId };
+      const client = new CDPClient(session, frameId, context.id);
+      this.clients.set(frameId, client);
+
+      // Inject frameId
+      await client.injectFrameId();
     }
-
-    console.log(`[CDPSession] Creating client for same-process frame: ${frameId}`);
-
-    // Create client for same-process iframe with execution context
-    const session: DebuggerSession = { tabId: this.tabId };
-    const client = new CDPClient(session, frameId, context.id);
-    this.clients.set(frameId, client);
-
-    // Inject frameId
-    await client.injectFrameId();
   }
 
   /**
@@ -269,13 +322,61 @@ export class CDPSession {
   }
 
   /**
+   * Get CDP client for a specific frame, or main frame if no frameId provided
+   */
+  async getCDPClient(frameId?: FrameId): Promise<CDPClient | null> {
+    // Ensure main frame is detected first
+    if (!this.mainFrameId) {
+      await this.detectMainFrame();
+    }
+
+    // If no frameId provided, get main frame client
+    if (!frameId) {
+      if (!this.mainFrameId) {
+        console.warn(`[CDPSession] Failed to detect main frame for tab ${this.tabId}`);
+        return null;
+      }
+      frameId = this.mainFrameId;
+    }
+
+    // Check if the requested frameId is the main frame
+    const client = this.clients.get(frameId);
+    if (client && this.mainFrameId && frameId === this.mainFrameId) {
+      // Ensure the client is marked as main frame
+      if (!client.getInfo().isMainFrame) {
+        console.log(`[CDPSession] Marking client as main frame: ${frameId}`);
+        client.setMainFrame(true);
+      }
+    }
+
+    return client || null;
+  }
+
+  /**
    * Get all client info for display
    */
-  getAllClients(): CDPClientInfo[] {
+  async getAllClients(): Promise<CDPClientInfo[]> {
+    console.log(
+      `[CDPSession] getAllClients called for tab ${this.tabId}, current clients:`,
+      Array.from(this.clients.keys()),
+    );
+
+    // Detect main frame if not already detected for proper client info
+    if (!this.mainFrameId) {
+      console.log(`[CDPSession] Main frame not detected yet, detecting now for getAllClients`);
+      await this.detectMainFrame();
+    }
+
     const clientInfos: CDPClientInfo[] = [];
 
     for (const [frameId, client] of this.clients.entries()) {
       const info = client.getInfo();
+
+      // Check if this client is the main frame and mark it if needed
+      if (this.mainFrameId && frameId === this.mainFrameId && !info.isMainFrame) {
+        console.log(`[CDPSession] Marking existing client as main frame: ${frameId}`);
+        client.setMainFrame(true);
+      }
 
       // Try to get URL for this frame
       let url = 'unknown';
@@ -293,6 +394,7 @@ export class CDPSession {
       });
     }
 
+    console.log(`[CDPSession] Returning ${clientInfos.length} clients`);
     return clientInfos;
   }
 
@@ -301,7 +403,19 @@ export class CDPSession {
    */
   async cleanup(): Promise<void> {
     console.log(`[CDPSession] Cleaning up session for tab ${this.tabId}`);
+    console.log(`[CDPSession] Current clients before cleanup:`, Array.from(this.clients.keys()));
+
+    // Clear all clients
     this.clients.clear();
+
+    console.log(`[CDPSession] Clients after clear:`, Array.from(this.clients.keys()));
+
+    // Reset state
+    this.isInitialized = false;
+    this.mainFrameId = null;
+
+    // Note: We don't disable CDP domains here because the debugger will be detached
+    // by Puppeteer, which will automatically clean up all CDP state
   }
 
   getTabId(): number {

@@ -1,5 +1,5 @@
 import { CDPSession } from './cdp-session';
-import { ExecutionContextDescription, TargetInfo, CDPClientInfo } from './types';
+import { ExecutionContextDescription, TargetInfo, CDPClientInfo, DebuggerEventSource } from './types';
 
 /**
  * Simplified CDPSessionManager that manages CDP sessions per tab
@@ -17,7 +17,10 @@ export class CDPSessionManager {
    */
   private setupChromeListeners(): void {
     chrome.debugger.onEvent.addListener((source, method, params) => {
-      this.handleDebuggerEvent(source, method, params);
+      // Handle async event processing
+      this.handleDebuggerEvent(source, method, params).catch(error => {
+        console.error(`[CDPSessionManager] Event handler error for ${method}:`, error);
+      });
     });
 
     chrome.debugger.onDetach.addListener((source, reason) => {
@@ -57,6 +60,8 @@ export class CDPSessionManager {
    * Detach debugger from a tab (Puppeteer cleanup handled by Page class)
    */
   async detach(tabId: number): Promise<void> {
+    console.log(`[CDPSessionManager] Starting detach for tab ${tabId}`);
+
     if (!this.sessions.has(tabId)) {
       console.log(`[CDPSessionManager] Not attached to tab ${tabId}`);
       return;
@@ -64,7 +69,9 @@ export class CDPSessionManager {
 
     const session = this.sessions.get(tabId);
     if (session) {
+      console.log(`[CDPSessionManager] Calling cleanup on session for tab ${tabId}`);
       await session.cleanup();
+      console.log(`[CDPSessionManager] Cleanup completed, removing session from map`);
       this.sessions.delete(tabId);
     }
 
@@ -74,7 +81,7 @@ export class CDPSessionManager {
   /**
    * Handle debugger events from Chrome
    */
-  private handleDebuggerEvent(source: chrome.debugger.Debuggee, method: string, params: any): void {
+  private async handleDebuggerEvent(source: chrome.debugger.Debuggee, method: string, params: any): Promise<void> {
     // Uncomment for debugging:
     // console.log(`[CDPSessionManager] Debugger event: ${method} for tab ${source.tabId}`, {
     //   method,
@@ -87,17 +94,34 @@ export class CDPSessionManager {
     let session = this.sessions.get(source.tabId);
     if (!session) {
       // Create session if event arrives but session doesn't exist yet
-      console.log(`[CDPSessionManager] Creating session for tab ${source.tabId} due to event: ${method}`);
+      console.log(`[CDPSessionManager] Creating session for event ${method} on tab ${source.tabId}`);
       session = new CDPSession(source.tabId);
       this.sessions.set(source.tabId, session);
+
+      // Initialize the session asynchronously
+      try {
+        await session.initialize();
+      } catch (error) {
+        console.error(`[CDPSessionManager] Failed to initialize session for tab ${source.tabId}:`, error);
+        this.sessions.delete(source.tabId);
+        return;
+      }
     }
 
     // Route events to the appropriate handler
     switch (method) {
       case 'Runtime.executionContextCreated':
-        console.log(`[CDPSessionManager] ⚡ Runtime.executionContextCreated event for tab ${source.tabId}`);
+        console.log(
+          `[CDPSessionManager] ⚡ Runtime.executionContextCreated event for tab ${source.tabId}`,
+          (source as DebuggerEventSource).sessionId
+            ? `(OOPIF sessionId: ${(source as DebuggerEventSource).sessionId})`
+            : '(main tab)',
+        );
         if (params.context) {
-          session.handleExecutionContextCreated(params.context as ExecutionContextDescription);
+          session.handleExecutionContextCreated(
+            params.context as ExecutionContextDescription,
+            source as DebuggerEventSource,
+          );
         }
         break;
 
@@ -158,9 +182,9 @@ export class CDPSessionManager {
   /**
    * Get all CDP clients for a tab
    */
-  getClients(tabId: number): CDPClientInfo[] {
+  async getClients(tabId: number): Promise<CDPClientInfo[]> {
     const session = this.sessions.get(tabId);
-    return session ? session.getAllClients() : [];
+    return session ? await session.getAllClients() : [];
   }
 
   /**

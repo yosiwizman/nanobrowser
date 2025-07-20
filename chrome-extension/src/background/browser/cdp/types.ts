@@ -4,6 +4,12 @@ export interface DebuggerSession {
   sessionId?: string; // Only present for child sessions (OOPIFs)
 }
 
+// Simple interface for debugger event source
+export interface DebuggerEventSource {
+  tabId: number;
+  sessionId?: string; // Present when the event comes from an OOPIF
+}
+
 // Frame and CDP types
 export type FrameId = string;
 export type LoaderId = string;

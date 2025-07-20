@@ -10,6 +10,7 @@ import Page, { build_initial_state } from './page';
 import { createLogger } from '@src/background/log';
 import { isUrlAllowed } from './util';
 import { CDPSessionManager } from './cdp/cdp-session-manager';
+import type { CDPClientInfo } from './cdp/types';
 
 const logger = createLogger('BrowserContext');
 export default class BrowserContext {
@@ -355,5 +356,11 @@ export default class BrowserContext {
     if (page) {
       await page.removeHighlight();
     }
+  }
+
+  public async getCDPClientsInfo(): Promise<CDPClientInfo[]> {
+    const currentPage = await this.getCurrentPage();
+    const tabId = currentPage.tabId;
+    return this._cdpSessionManager.getClients(tabId);
   }
 }
