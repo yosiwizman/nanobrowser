@@ -26,3 +26,4 @@ chrome-extension/public/manifest.json
 .vscode
 .cursor
 *.py
+.aider*
