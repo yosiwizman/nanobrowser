@@ -2,12 +2,10 @@ import { type ProviderConfig, type ModelConfig, ProviderTypeEnum } from '@extens
 import { ChatOpenAI, AzureChatOpenAI } from '@langchain/openai';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
-import { ChatXAI } from '@langchain/xai';
-import { ChatGroq } from '@langchain/groq';
+// Removed imports: ChatXAI, ChatGroq, ChatDeepSeek
 import { ChatCerebras } from '@langchain/cerebras';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { ChatOllama } from '@langchain/ollama';
-import { ChatDeepSeek } from '@langchain/deepseek';
 import { AIMessage } from '@langchain/core/messages';
 import type { BaseMessage } from '@langchain/core/messages';
 
@@ -241,15 +239,7 @@ export function createChatModel(providerConfig: ProviderConfig, modelConfig: Mod
       };
       return new ChatAnthropic(args);
     }
-    case ProviderTypeEnum.DeepSeek: {
-      const args = {
-        model: modelConfig.modelName,
-        apiKey: providerConfig.apiKey,
-        temperature,
-        topP,
-      };
-      return new ChatDeepSeek(args) as BaseChatModel;
-    }
+    // Removed DeepSeek case
     case ProviderTypeEnum.Gemini: {
       const args = {
         model: modelConfig.modelName,
@@ -259,27 +249,8 @@ export function createChatModel(providerConfig: ProviderConfig, modelConfig: Mod
       };
       return new ChatGoogleGenerativeAI(args);
     }
-    case ProviderTypeEnum.Grok: {
-      const args = {
-        model: modelConfig.modelName,
-        apiKey: providerConfig.apiKey,
-        temperature,
-        topP,
-        maxTokens,
-        configuration: {},
-      };
-      return new ChatXAI(args) as BaseChatModel;
-    }
-    case ProviderTypeEnum.Groq: {
-      const args = {
-        model: modelConfig.modelName,
-        apiKey: providerConfig.apiKey,
-        temperature,
-        topP,
-        maxTokens,
-      };
-      return new ChatGroq(args);
-    }
+    // Removed Grok case
+    // Removed Groq case
     case ProviderTypeEnum.Cerebras: {
       const args = {
         model: modelConfig.modelName,
