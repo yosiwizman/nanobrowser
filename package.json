@@ -30,6 +30,13 @@
     "update-version": "bash update_version.sh"
   },
   "dependencies": {
+    "@langchain/core": "^0.3.0",
+    "@langchain/community": "^0.3.0",
+    "@langchain/openai": "^0.3.0",
+    "@langchain/anthropic": "^0.3.0",
+    "@langchain/google-genai": "^0.1.0",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.0",
     "eslint-plugin-tailwindcss": "^3.17.4",
     "react": "18.3.1",
     "react-dom": "18.3.1"

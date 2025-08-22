@@ -15,6 +15,9 @@ export default defineConfig({
       '@root': rootDir,
       '@src': srcDir,
       '@assets': resolve(srcDir, 'assets'),
+      // Add alias to handle langchain imports
+      'langchain/core': resolve(rootDir, 'node_modules/@langchain/core'),
+      '@langchain/core': resolve(rootDir, 'node_modules/@langchain/core'),
     },
     conditions: ['browser', 'module', 'import', 'default'],
     mainFields: ['browser', 'module', 'main']
@@ -56,11 +59,36 @@ export default defineConfig({
         'chrome',
         // 'chromium-bidi/lib/cjs/bidiMapper/BidiMapper.js'
       ],
+      output: {
+        globals: {
+          chrome: 'chrome'
+        }
+      }
     },
   },
-
+  optimizeDeps: {
+    include: [
+      '@langchain/core',
+      '@langchain/community',
+      '@langchain/openai',
+      '@langchain/anthropic',
+      '@langchain/google-genai',
+      'zod',
+      'zod-to-json-schema'
+    ],
+    exclude: [
+      'chrome'
+    ],
+    esbuildOptions: {
+      define: {
+        global: 'globalThis',
+      },
+    },
+  },
   define: {
     'import.meta.env.DEV': isDev,
+    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'production'),
+    global: 'globalThis',
   },
 
   envDir: '../',
